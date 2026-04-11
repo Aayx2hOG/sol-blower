@@ -117,6 +117,14 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans), sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display), sans-serif;
   }
 
   button:not(:disabled),
@@ -125,8 +133,61 @@
   }
 }
 
+@layer utilities {
+  .glass-panel {
+    @apply rounded-3xl border border-white/12 bg-white/6 backdrop-blur-xl;
+  }
+
+  .elevated-panel {
+    @apply rounded-3xl border border-white/10 bg-black/45 shadow-2xl shadow-black/70;
+  }
+
+  .section-fade-in {
+    animation: section-fade-in 560ms ease-out both;
+  }
+
+  .spotlight-card {
+    @apply relative overflow-hidden rounded-2xl border border-white/12 bg-zinc-950/55 p-5 shadow-2xl shadow-black/70;
+  }
+
+  .spotlight-card::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    background: radial-gradient(220px circle at var(--spotlight-x, 50%) var(--spotlight-y, 50%), rgba(255, 255, 255, 0.2), transparent 60%);
+    opacity: 0;
+    transition: opacity 220ms ease;
+    pointer-events: none;
+  }
+
+  .spotlight-card:hover::before {
+    opacity: 1;
+  }
+}
+
+@keyframes section-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .wallet-adapter-button-trigger {
   height: auto !important;
-  @apply !border !bg-background !shadow-xs hover:!bg-accent !text-accent-foreground hover:!text-accent-foreground dark:!bg-input/30 !border-input/10 dark:!border-input dark:hover:!bg-input/50;
-  @apply !px-2 !py-[6px] !rounded-md !text-sm !font-semibold !shadow-sm !transition-all;
+  border: 1px solid color-mix(in srgb, white 14%, transparent) !important;
+  background: color-mix(in srgb, rgb(24 24 27) 88%, transparent) !important;
+  color: rgb(244 244 245) !important;
+  border-radius: 0.65rem !important;
+  padding: 0.4rem 0.7rem !important;
+  box-shadow: 0 6px 24px -14px rgba(0, 0, 0, 0.7) !important;
+  transition: all 180ms ease !important;
+}
+
+.wallet-adapter-button-trigger:hover {
+  background: color-mix(in srgb, rgb(39 39 42) 90%, transparent) !important;
 }

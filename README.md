@@ -1,28 +1,38 @@
-# sol-zk
+# SolZk
 
-This is a Next.js app containing:
+SolZk is a Solana-native anonymous whistleblower platform starter built with Next.js, Anchor-ready app structure, and a Bun workflow.
 
-- Tailwind CSS setup for styling
-- Useful wallet UI elements setup using [@solana/web3.js](https://www.npmjs.com/package/@solana/web3.js)
+## What’s in the starter
+
+- Professional SaaS-style landing page
+- Reporter, admin, and security app routes
+- Solana wallet and cluster shell
+- Vercel-friendly Next.js deployment layout
 
 ## Getting Started
 
-### Installation
-
-#### Download the template
+### Install
 
 ```shell
-pnpm create solana-dapp@latest -t gh:solana-foundation/templates/web3js/sol-zk
+bun install
 ```
 
-#### Install Dependencies
+### Run locally
 
 ```shell
-pnpm install
+bun run dev
 ```
 
-#### Start the web app
+### Build
 
 ```shell
-pnpm dev
+bun run build
 ```
+
+### Deploy on Vercel
+
+Import the repository into Vercel as a Next.js app. Vercel will detect the Bun lockfile and build the app with the Next.js default pipeline.
+
+## Roadmap
+
+Phase 1 discovery and assumptions for the Solana-only whistleblower platform are documented in [docs/phase-1-discovery-and-assumptions.md](docs/phase-1-discovery-and-assumptions.md).

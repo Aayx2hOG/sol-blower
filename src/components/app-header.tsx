@@ -2,10 +2,10 @@
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import Link from 'next/link'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
-import { Menu, X } from 'lucide-react'
+import { Menu, X, ShieldCheck, ArrowRight } from 'lucide-react'
 import { ThemeSelect } from '@/components/theme-select'
-import { ClusterUiSelect } from './cluster/cluster-ui'
 import { WalletButton } from '@/components/solana/solana-provider'
 
 export function AppHeader({ links = [] }: { links: { label: string; path: string }[] }) {
@@ -17,20 +17,20 @@ export function AppHeader({ links = [] }: { links: { label: string; path: string
   }
 
   return (
-    <header className="relative z-50 px-4 py-2 bg-neutral-100 dark:bg-neutral-900 dark:text-neutral-400">
-      <div className="mx-auto flex justify-between items-center">
-        <div className="flex items-baseline gap-4">
-          <Link className="text-xl hover:text-neutral-500 dark:hover:text-white" href="/">
-            <span>SolZk</span>
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-black/70 px-4 py-3 text-zinc-200 backdrop-blur-2xl">
+      <div className="mx-auto flex items-center justify-between gap-4 lg:max-w-7xl">
+        <div className="flex items-center gap-6">
+          <Link className="flex items-center gap-2 text-lg font-semibold tracking-tight text-white" href="/">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/20 bg-white/5 text-zinc-100">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
+            <span className="font-mono text-base">SolZk</span>
           </Link>
           <div className="hidden md:flex items-center">
-            <ul className="flex gap-4 flex-nowrap items-center">
+            <ul className="flex items-center gap-1">
               {links.map(({ label, path }) => (
                 <li key={path}>
-                  <Link
-                    className={`hover:text-neutral-500 dark:hover:text-white ${isActive(path) ? 'text-neutral-500 dark:text-white' : ''}`}
-                    href={path}
-                  >
+                  <Link className={`rounded-lg px-3 py-2 text-sm transition-colors hover:bg-white/7 hover:text-white ${isActive(path) ? 'bg-white/12 text-white' : 'text-zinc-300'}`} href={path}>
                     {label}
                   </Link>
                 </li>
@@ -39,40 +39,51 @@ export function AppHeader({ links = [] }: { links: { label: string; path: string
           </div>
         </div>
 
-        <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setShowMenu(!showMenu)}>
+        <Button variant="ghost" size="icon" className="text-zinc-200 hover:bg-white/5 md:hidden" onClick={() => setShowMenu(!showMenu)}>
           {showMenu ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
         </Button>
 
-        <div className="hidden md:flex items-center gap-4">
+        <div className="hidden items-center gap-2.5 md:flex">
           <WalletButton />
-          <ClusterUiSelect />
           <ThemeSelect />
         </div>
-
-        {showMenu && (
-          <div className="md:hidden fixed inset-x-0 top-[52px] bottom-0 bg-neutral-100/95 dark:bg-neutral-900/95 backdrop-blur-sm">
-            <div className="flex flex-col p-4 gap-4 border-t dark:border-neutral-800">
-              <ul className="flex flex-col gap-4">
-                {links.map(({ label, path }) => (
-                  <li key={path}>
-                    <Link
-                      className={`hover:text-neutral-500 dark:hover:text-white block text-lg py-2  ${isActive(path) ? 'text-neutral-500 dark:text-white' : ''} `}
-                      href={path}
-                      onClick={() => setShowMenu(false)}
-                    >
-                      {label}
+        <AnimatePresence>
+          {showMenu && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="fixed inset-x-0 top-16 bottom-0 bg-black/96 backdrop-blur-xl md:hidden"
+            >
+              <div className="flex flex-col gap-4 border-t border-white/10 p-4">
+                <ul className="flex flex-col gap-2">
+                  {links.map(({ label, path }) => (
+                    <li key={path}>
+                      <Link
+                        className={`block rounded-lg px-3 py-3 text-base transition-colors hover:bg-white/8 hover:text-white ${isActive(path) ? 'bg-white/12 text-white' : 'text-zinc-300'}`}
+                        href={path}
+                        onClick={() => setShowMenu(false)}
+                      >
+                        {label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-col gap-3">
+                  <Button asChild variant="shine" className="justify-center font-semibold">
+                    <Link href="/onboarding" onClick={() => setShowMenu(false)}>
+                      Get Started
+                      <ArrowRight className="ml-2 h-4 w-4" />
                     </Link>
-                  </li>
-                ))}
-              </ul>
-              <div className="flex flex-col gap-4">
-                <WalletButton />
-                <ClusterUiSelect />
-                <ThemeSelect />
+                  </Button>
+                  <WalletButton />
+                  <ThemeSelect />
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </header>
   )
