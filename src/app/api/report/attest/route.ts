@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createWalletChallengeMessage, verifyMembershipCredential, verifyWalletChallengeSignature } from '@/lib/reporting/server/membership'
 import { getReportAttestationBySignature, saveReportAttestation } from '@/lib/reporting/server/repository'
 import { verifyMemoAttestation } from '@/lib/reporting/server/verify'
+import { jsonUnexpectedError, parseJsonBody } from '@/lib/reporting/server/http'
 import type { AttestReportRequest } from '@/lib/reporting/types'
 
 export const runtime = 'nodejs'
@@ -63,95 +64,108 @@ function validateRequest(body: AttestReportRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const body = (await request.json()) as AttestReportRequest
-    const validationError = validateRequest(body)
+    try {
+        const parsedBody = await parseJsonBody<AttestReportRequest>(request)
+        if (!parsedBody.ok) {
+            return parsedBody.response
+        }
 
-    if (validationError) {
-        return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
+        const body = parsedBody.data
+        const validationError = validateRequest(body)
+
+        if (validationError) {
+            return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
+        }
+
+        const existing = getReportAttestationBySignature(body.txSignature)
+        if (existing) {
+            return NextResponse.json({ ok: true, record: existing })
+        }
+
+        const verification = await verifyMemoAttestation({
+            signature: body.txSignature,
+            walletAddress: body.walletAddress,
+            proofCommitment: body.proofCommitment,
+            encryptedPayloadHash: body.encryptedPayloadHash,
+            org: body.draft.org.trim(),
+            epoch: body.draft.epoch.trim(),
+        })
+
+        if (!verification.ok) {
+            return NextResponse.json({ ok: false, error: verification.reason }, { status: 422 })
+        }
+
+        const membershipCheck = verifyMembershipCredential({
+            credential: body.membershipCredential,
+            walletAddress: body.walletAddress,
+            org: body.draft.org.trim(),
+            epoch: body.draft.epoch.trim(),
+        })
+
+        if (!membershipCheck.ok) {
+            return NextResponse.json({ ok: false, error: membershipCheck.reason }, { status: 422 })
+        }
+
+        const challengeAgeMs = Date.now() - Date.parse(body.walletChallenge.issuedAt)
+        if (challengeAgeMs < 0 || challengeAgeMs > 5 * 60 * 1000) {
+            return NextResponse.json({ ok: false, error: 'Wallet challenge expired. Please retry submission.' }, { status: 422 })
+        }
+
+        const challengeMessage = createWalletChallengeMessage({
+            walletAddress: body.walletAddress,
+            txSignature: body.txSignature,
+            proofCommitment: body.proofCommitment,
+            encryptedPayloadHash: body.encryptedPayloadHash,
+            org: body.draft.org.trim(),
+            epoch: body.draft.epoch.trim(),
+            challenge: body.walletChallenge,
+        })
+
+        const walletChallengeCheck = verifyWalletChallengeSignature({
+            walletAddress: body.walletAddress,
+            message: challengeMessage,
+            signatureBase64: body.walletSignatureBase64,
+        })
+
+        if (!walletChallengeCheck.ok) {
+            return NextResponse.json({ ok: false, error: walletChallengeCheck.reason }, { status: 422 })
+        }
+
+        const record = saveReportAttestation({
+            txSignature: body.txSignature,
+            walletAddress: body.walletAddress,
+            org: body.draft.org.trim(),
+            epoch: body.draft.epoch.trim(),
+            proofCommitment: body.proofCommitment,
+            encryptedPayloadHash: body.encryptedPayloadHash,
+            ivBase64: body.ivBase64,
+            memoMatched: verification.memoMatched,
+            membershipCredentialId: membershipCheck.credentialId,
+            walletChallengeNonce: body.walletChallenge.nonce,
+            membershipVerified: true,
+        })
+
+        return NextResponse.json({ ok: true, record })
+    } catch (error) {
+        return jsonUnexpectedError(error, 'Failed to attest report.')
     }
-
-    const existing = getReportAttestationBySignature(body.txSignature)
-    if (existing) {
-        return NextResponse.json({ ok: true, record: existing })
-    }
-
-    const verification = await verifyMemoAttestation({
-        signature: body.txSignature,
-        walletAddress: body.walletAddress,
-        proofCommitment: body.proofCommitment,
-        encryptedPayloadHash: body.encryptedPayloadHash,
-        org: body.draft.org.trim(),
-        epoch: body.draft.epoch.trim(),
-    })
-
-    if (!verification.ok) {
-        return NextResponse.json({ ok: false, error: verification.reason }, { status: 422 })
-    }
-
-    const membershipCheck = verifyMembershipCredential({
-        credential: body.membershipCredential,
-        walletAddress: body.walletAddress,
-        org: body.draft.org.trim(),
-        epoch: body.draft.epoch.trim(),
-    })
-
-    if (!membershipCheck.ok) {
-        return NextResponse.json({ ok: false, error: membershipCheck.reason }, { status: 422 })
-    }
-
-    const challengeAgeMs = Date.now() - Date.parse(body.walletChallenge.issuedAt)
-    if (challengeAgeMs < 0 || challengeAgeMs > 5 * 60 * 1000) {
-        return NextResponse.json({ ok: false, error: 'Wallet challenge expired. Please retry submission.' }, { status: 422 })
-    }
-
-    const challengeMessage = createWalletChallengeMessage({
-        walletAddress: body.walletAddress,
-        txSignature: body.txSignature,
-        proofCommitment: body.proofCommitment,
-        encryptedPayloadHash: body.encryptedPayloadHash,
-        org: body.draft.org.trim(),
-        epoch: body.draft.epoch.trim(),
-        challenge: body.walletChallenge,
-    })
-
-    const walletChallengeCheck = verifyWalletChallengeSignature({
-        walletAddress: body.walletAddress,
-        message: challengeMessage,
-        signatureBase64: body.walletSignatureBase64,
-    })
-
-    if (!walletChallengeCheck.ok) {
-        return NextResponse.json({ ok: false, error: walletChallengeCheck.reason }, { status: 422 })
-    }
-
-    const record = saveReportAttestation({
-        txSignature: body.txSignature,
-        walletAddress: body.walletAddress,
-        org: body.draft.org.trim(),
-        epoch: body.draft.epoch.trim(),
-        proofCommitment: body.proofCommitment,
-        encryptedPayloadHash: body.encryptedPayloadHash,
-        ivBase64: body.ivBase64,
-        memoMatched: verification.memoMatched,
-        membershipCredentialId: membershipCheck.credentialId,
-        walletChallengeNonce: body.walletChallenge.nonce,
-        membershipVerified: true,
-    })
-
-    return NextResponse.json({ ok: true, record })
 }
 
 export async function GET(request: NextRequest) {
-    const signature = request.nextUrl.searchParams.get('signature')
+    try {
+        const signature = request.nextUrl.searchParams.get('signature')
 
-    if (!signature) {
-        return NextResponse.json({ ok: false, error: 'Missing signature query parameter.' }, { status: 400 })
+        if (!signature) {
+            return NextResponse.json({ ok: false, error: 'Missing signature query parameter.' }, { status: 400 })
+        }
+
+        const record = getReportAttestationBySignature(signature)
+        if (!record) {
+            return NextResponse.json({ ok: false, error: 'No attestation found for signature.' }, { status: 404 })
+        }
+
+        return NextResponse.json({ ok: true, record })
+    } catch (error) {
+        return jsonUnexpectedError(error, 'Failed to read attestation.')
     }
-
-    const record = getReportAttestationBySignature(signature)
-    if (!record) {
-        return NextResponse.json({ ok: false, error: 'No attestation found for signature.' }, { status: 404 })
-    }
-
-    return NextResponse.json({ ok: true, record })
 }

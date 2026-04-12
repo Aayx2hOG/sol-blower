@@ -8,6 +8,7 @@ import { useWallet } from '@solana/wallet-adapter-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { parseApiJson } from '@/lib/reporting/http'
 import type { MembershipRegistrationRequestRecord, OrgRecord, UserProfileRecord } from '@/lib/reporting/types'
 
 type OnboardingStateResponse = {
@@ -54,7 +55,7 @@ export default function OnboardingPage() {
             try {
                 setLoadingState(true)
                 const response = await fetch(`/api/onboarding/state?walletAddress=${encodeURIComponent(walletAddress)}`)
-                const payload = (await response.json()) as OnboardingStateResponse | { ok: false; error: string }
+                const payload = await parseApiJson<OnboardingStateResponse>(response, 'Unable to load onboarding state.')
 
                 if (!response.ok || !payload.ok) {
                     throw new Error(payload.ok ? 'Unable to load onboarding state.' : payload.error)
@@ -117,9 +118,10 @@ export default function OnboardingPage() {
                 }),
             })
 
-            const payload = (await response.json()) as
-                | { ok: true; registrationRequest: MembershipRegistrationRequestRecord }
-                | { ok: false; error: string }
+            const payload = await parseApiJson<{ ok: true; registrationRequest: MembershipRegistrationRequestRecord }>(
+                response,
+                'Failed to join organization.',
+            )
 
             if (!response.ok || !payload.ok) {
                 throw new Error(payload.ok ? 'Failed to join organization.' : payload.error)
@@ -162,9 +164,7 @@ export default function OnboardingPage() {
                 }),
             })
 
-            const payload = (await response.json()) as
-                | { ok: true; org: OrgRecord }
-                | { ok: false; error: string }
+            const payload = await parseApiJson<{ ok: true; org: OrgRecord }>(response, 'Failed to create organization.')
 
             if (!response.ok || !payload.ok) {
                 throw new Error(payload.ok ? 'Failed to create organization.' : payload.error)

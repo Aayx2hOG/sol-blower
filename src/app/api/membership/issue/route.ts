@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { issueMembershipCredential } from '@/lib/reporting/server/membership'
+import { jsonUnexpectedError, parseJsonBody } from '@/lib/reporting/server/http'
 import type { IssueMembershipCredentialRequest, IssueMembershipCredentialResponse } from '@/lib/reporting/types'
 
 export const runtime = 'nodejs'
@@ -45,32 +46,41 @@ function isAuthorized(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const auth = isAuthorized(request)
-    if (!auth.ok) {
-        return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
+    try {
+        const auth = isAuthorized(request)
+        if (!auth.ok) {
+            return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
+        }
+
+        const parsedBody = await parseJsonBody<IssueMembershipCredentialRequest>(request)
+        if (!parsedBody.ok) {
+            return parsedBody.response
+        }
+
+        const body = parsedBody.data
+        const validationError = validateIssueRequest(body)
+        if (validationError) {
+            return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
+        }
+
+        const issued = issueMembershipCredential({
+            org: body.org.trim(),
+            epoch: body.epoch.trim(),
+            walletAddress: body.walletAddress.trim(),
+            ttlDays: body.ttlDays,
+        })
+
+        if (!issued.ok) {
+            return NextResponse.json({ ok: false, error: issued.reason }, { status: 422 })
+        }
+
+        const payload: IssueMembershipCredentialResponse = {
+            credential: issued.credential,
+            suggestedFileName: issued.suggestedFileName,
+        }
+
+        return NextResponse.json({ ok: true, ...payload })
+    } catch (error) {
+        return jsonUnexpectedError(error, 'Failed to issue membership credential.')
     }
-
-    const body = (await request.json()) as IssueMembershipCredentialRequest
-    const validationError = validateIssueRequest(body)
-    if (validationError) {
-        return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
-    }
-
-    const issued = issueMembershipCredential({
-        org: body.org.trim(),
-        epoch: body.epoch.trim(),
-        walletAddress: body.walletAddress.trim(),
-        ttlDays: body.ttlDays,
-    })
-
-    if (!issued.ok) {
-        return NextResponse.json({ ok: false, error: issued.reason }, { status: 422 })
-    }
-
-    const payload: IssueMembershipCredentialResponse = {
-        credential: issued.credential,
-        suggestedFileName: issued.suggestedFileName,
-    }
-
-    return NextResponse.json({ ok: true, ...payload })
 }

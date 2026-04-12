@@ -15,6 +15,7 @@ import { SpotlightCard } from '@/components/ui/spotlight-card'
 import { useCluster } from '@/components/cluster/cluster-data-access'
 import { createWalletChallengeMessage, encodeSignatureBase64 } from '@/lib/reporting/membership'
 import { encryptReportPayload, generateProofCommitment } from '@/lib/reporting/crypto'
+import { parseApiJson } from '@/lib/reporting/http'
 import { submitReportMemo } from '@/lib/reporting/solana'
 import type { AttestReportRequest, MembershipCredential, ReportDraft } from '@/lib/reporting/types'
 
@@ -113,9 +114,7 @@ export default function ReportPage() {
             body: JSON.stringify(input),
         })
 
-        const payload = (await response.json()) as
-            | { ok: true; record: { id: string } }
-            | { ok: false; error: string }
+        const payload = await parseApiJson<{ ok: true; record: { id: string } }>(response, 'Attestation failed.')
 
         if (!response.ok || !payload.ok) {
             throw new Error(payload.ok ? 'Attestation failed.' : payload.error)
@@ -131,9 +130,10 @@ export default function ReportPage() {
 
         try {
             const response = await fetch(`/api/onboarding/state?walletAddress=${encodeURIComponent(wallet.publicKey.toBase58())}`)
-            const payload = (await response.json()) as
-                | { ok: true; profile: { role: 'admin' | 'reporter'; membershipStatus: 'pending' | 'approved'; org: string } | null }
-                | { ok: false; error: string }
+            const payload = await parseApiJson<{
+                ok: true
+                profile: { role: 'admin' | 'reporter'; membershipStatus: 'pending' | 'approved'; org: string } | null
+            }>(response, 'Unable to load onboarding status.')
 
             if (!response.ok || !payload.ok) {
                 return null

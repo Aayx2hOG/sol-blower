@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 import { issueMembershipCredential } from '@/lib/reporting/server/membership'
 import { getMembershipRegistrationRequestById, markMembershipRegistrationApproved, markUserProfileMembershipApproved } from '@/lib/reporting/server/repository'
+import { jsonUnexpectedError, parseJsonBody } from '@/lib/reporting/server/http'
 import type { ApproveMembershipRegistrationRequest, IssueMembershipCredentialResponse } from '@/lib/reporting/types'
 
 export const runtime = 'nodejs'
@@ -43,47 +44,56 @@ function validateApproveRequest(body: ApproveMembershipRegistrationRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const auth = isAuthorized(request)
-    if (!auth.ok) {
-        return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
+    try {
+        const auth = isAuthorized(request)
+        if (!auth.ok) {
+            return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
+        }
+
+        const parsedBody = await parseJsonBody<ApproveMembershipRegistrationRequest>(request)
+        if (!parsedBody.ok) {
+            return parsedBody.response
+        }
+
+        const body = parsedBody.data
+        const validationError = validateApproveRequest(body)
+
+        if (validationError) {
+            return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
+        }
+
+        const registrationRequest = getMembershipRegistrationRequestById(body.requestId.trim())
+        if (!registrationRequest) {
+            return NextResponse.json({ ok: false, error: 'Registration request not found.' }, { status: 404 })
+        }
+
+        if (registrationRequest.status !== 'pending') {
+            return NextResponse.json({ ok: false, error: 'Registration request already processed.' }, { status: 409 })
+        }
+
+        const issued = issueMembershipCredential({
+            org: registrationRequest.org,
+            epoch: body.epoch.trim(),
+            walletAddress: registrationRequest.walletAddress,
+            ttlDays: body.ttlDays,
+        })
+
+        if (!issued.ok) {
+            return NextResponse.json({ ok: false, error: issued.reason }, { status: 422 })
+        }
+
+        const approved = markMembershipRegistrationApproved(registrationRequest.id)
+        const profile = markUserProfileMembershipApproved({
+            walletAddress: registrationRequest.walletAddress,
+            org: registrationRequest.org,
+        })
+        const payload: IssueMembershipCredentialResponse = {
+            credential: issued.credential,
+            suggestedFileName: issued.suggestedFileName,
+        }
+
+        return NextResponse.json({ ok: true, approved, profile, ...payload })
+    } catch (error) {
+        return jsonUnexpectedError(error, 'Failed to approve registration request.')
     }
-
-    const body = (await request.json()) as ApproveMembershipRegistrationRequest
-    const validationError = validateApproveRequest(body)
-
-    if (validationError) {
-        return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
-    }
-
-    const registrationRequest = getMembershipRegistrationRequestById(body.requestId.trim())
-    if (!registrationRequest) {
-        return NextResponse.json({ ok: false, error: 'Registration request not found.' }, { status: 404 })
-    }
-
-    if (registrationRequest.status !== 'pending') {
-        return NextResponse.json({ ok: false, error: 'Registration request already processed.' }, { status: 409 })
-    }
-
-    const issued = issueMembershipCredential({
-        org: registrationRequest.org,
-        epoch: body.epoch.trim(),
-        walletAddress: registrationRequest.walletAddress,
-        ttlDays: body.ttlDays,
-    })
-
-    if (!issued.ok) {
-        return NextResponse.json({ ok: false, error: issued.reason }, { status: 422 })
-    }
-
-    const approved = markMembershipRegistrationApproved(registrationRequest.id)
-    const profile = markUserProfileMembershipApproved({
-        walletAddress: registrationRequest.walletAddress,
-        org: registrationRequest.org,
-    })
-    const payload: IssueMembershipCredentialResponse = {
-        credential: issued.credential,
-        suggestedFileName: issued.suggestedFileName,
-    }
-
-    return NextResponse.json({ ok: true, approved, profile, ...payload })
 }

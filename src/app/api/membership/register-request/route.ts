@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { createMembershipRegistrationRequest, listMembershipRegistrationRequests } from '@/lib/reporting/server/repository'
+import { jsonUnexpectedError, parseJsonBody } from '@/lib/reporting/server/http'
 import type { CreateMembershipRegistrationRequest } from '@/lib/reporting/types'
 
 export const runtime = 'nodejs'
@@ -40,27 +41,40 @@ function validateCreateRequest(body: CreateMembershipRegistrationRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const body = (await request.json()) as CreateMembershipRegistrationRequest
-    const validationError = validateCreateRequest(body)
+    try {
+        const parsedBody = await parseJsonBody<CreateMembershipRegistrationRequest>(request)
+        if (!parsedBody.ok) {
+            return parsedBody.response
+        }
 
-    if (validationError) {
-        return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
+        const body = parsedBody.data
+        const validationError = validateCreateRequest(body)
+
+        if (validationError) {
+            return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
+        }
+
+        const record = createMembershipRegistrationRequest({
+            org: body.org.trim(),
+            walletAddress: body.walletAddress.trim(),
+        })
+
+        return NextResponse.json({ ok: true, record })
+    } catch (error) {
+        return jsonUnexpectedError(error, 'Failed to create registration request.')
     }
-
-    const record = createMembershipRegistrationRequest({
-        org: body.org.trim(),
-        walletAddress: body.walletAddress.trim(),
-    })
-
-    return NextResponse.json({ ok: true, record })
 }
 
 export async function GET(request: NextRequest) {
-    const auth = isAuthorized(request)
-    if (!auth.ok) {
-        return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
-    }
+    try {
+        const auth = isAuthorized(request)
+        if (!auth.ok) {
+            return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
+        }
 
-    const records = listMembershipRegistrationRequests()
-    return NextResponse.json({ ok: true, records })
+        const records = listMembershipRegistrationRequests()
+        return NextResponse.json({ ok: true, records })
+    } catch (error) {
+        return jsonUnexpectedError(error, 'Failed to load registration requests.')
+    }
 }

@@ -14,7 +14,9 @@ type InternalOrgRecord = OrgRecord & {
 
 const orgStore = new Map<string, InternalOrgRecord>()
 const userProfileStore = new Map<string, UserProfileRecord>()
-const persistenceFilePath = resolve(process.cwd(), '.data', 'reporting-state.json')
+const persistenceFilePath = process.env.VERCEL
+    ? resolve('/tmp', 'sol-zk-reporting-state.json')
+    : resolve(process.cwd(), '.data', 'reporting-state.json')
 
 type PersistedState = {
     reports: ReportAttestationRecord[]
@@ -24,6 +26,8 @@ type PersistedState = {
 }
 
 let persistenceReady = false
+let persistenceDisabled = false
+let persistenceWarningShown = false
 
 function readLegacySecretSeed(orgIdentifier: string) {
     const raw = process.env.REPORT_ORG_ADMIN_SECRET_KEYS
@@ -88,16 +92,29 @@ function loadPersistedState() {
 }
 
 function persistState() {
-    mkdirSync(dirname(persistenceFilePath), { recursive: true })
-
-    const snapshot: PersistedState = {
-        reports: Array.from(reportStore.values()),
-        membershipRequests: Array.from(membershipRegistrationStore.values()),
-        orgs: Array.from(orgStore.values()),
-        userProfiles: Array.from(userProfileStore.values()),
+    if (persistenceDisabled) {
+        return
     }
 
-    writeFileSync(persistenceFilePath, JSON.stringify(snapshot, null, 2), 'utf8')
+    try {
+        mkdirSync(dirname(persistenceFilePath), { recursive: true })
+
+        const snapshot: PersistedState = {
+            reports: Array.from(reportStore.values()),
+            membershipRequests: Array.from(membershipRegistrationStore.values()),
+            orgs: Array.from(orgStore.values()),
+            userProfiles: Array.from(userProfileStore.values()),
+        }
+
+        writeFileSync(persistenceFilePath, JSON.stringify(snapshot, null, 2), 'utf8')
+    } catch (error) {
+        persistenceDisabled = true
+
+        if (!persistenceWarningShown) {
+            persistenceWarningShown = true
+            console.warn('Reporting state persistence disabled; continuing with in-memory state only.', error)
+        }
+    }
 }
 
 function ensureStateLoaded() {
@@ -274,7 +291,7 @@ export function createOrg({ name, adminWalletAddress }: { name: string; adminWal
 
     const existingBySlug = orgStore.get(slug)
     if (existingBySlug) {
-        return existingBySlug
+        return toPublicOrgRecord(existingBySlug)
     }
 
     const adminSecretKeySeed = createOrgSecretSeed()

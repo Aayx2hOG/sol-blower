@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { parseApiJson } from '@/lib/reporting/http'
 import type { IssueMembershipCredentialResponse, MembershipRegistrationRequestRecord } from '@/lib/reporting/types'
 
 function getCurrentQuarterEpoch() {
@@ -58,9 +59,10 @@ export default function AdminPage() {
                 },
             })
 
-            const payload = (await response.json()) as
-                | { ok: true; records: MembershipRegistrationRequestRecord[] }
-                | { ok: false; error: string }
+            const payload = await parseApiJson<{ ok: true; records: MembershipRegistrationRequestRecord[] }>(
+                response,
+                'Unable to load registration requests.',
+            )
 
             if (!response.ok || !payload.ok) {
                 throw new Error(payload.ok ? 'Unable to load registration requests.' : payload.error)
@@ -108,9 +110,10 @@ export default function AdminPage() {
                 }),
             })
 
-            const payload = (await response.json()) as
-                | ({ ok: true } & IssueMembershipCredentialResponse)
-                | { ok: false; error: string }
+            const payload = await parseApiJson<{ ok: true } & IssueMembershipCredentialResponse>(
+                response,
+                'Approval failed.',
+            )
 
             if (!response.ok || !payload.ok) {
                 throw new Error(payload.ok ? 'Approval failed.' : payload.error)
@@ -165,9 +168,10 @@ export default function AdminPage() {
                 }),
             })
 
-            const payload = (await response.json()) as
-                | ({ ok: true } & IssueMembershipCredentialResponse)
-                | { ok: false; error: string }
+            const payload = await parseApiJson<{ ok: true } & IssueMembershipCredentialResponse>(
+                response,
+                'Credential issuance failed.',
+            )
 
             if (!response.ok || !payload.ok) {
                 throw new Error(payload.ok ? 'Credential issuance failed.' : payload.error)
