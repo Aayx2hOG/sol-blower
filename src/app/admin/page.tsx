@@ -1,13 +1,17 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { useWallet } from '@solana/wallet-adapter-react'
 
+import { useCluster } from '@/components/cluster/cluster-data-access'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { parseApiJson } from '@/lib/reporting/http'
-import type { IssueMembershipCredentialResponse, MembershipRegistrationRequestRecord } from '@/lib/reporting/types'
+import { createAdminAuthMessage } from '@/lib/reporting/admin-auth'
+import { encodeSignatureBase64 } from '@/lib/reporting/membership'
+import type { DecryptedReportPayload, IssueMembershipCredentialResponse, MembershipRegistrationRequestRecord, ReportAttestationRecord } from '@/lib/reporting/types'
 
 function getCurrentQuarterEpoch() {
     const now = new Date()
@@ -26,37 +30,131 @@ function downloadJson(filename: string, data: unknown) {
 }
 
 export default function AdminPage() {
+    const wallet = useWallet()
+    const { getExplorerUrl } = useCluster()
+
     const [org, setOrg] = useState('')
     const [epoch, setEpoch] = useState('')
     const [walletAddress, setWalletAddress] = useState('')
     const [ttlDays, setTtlDays] = useState('90')
-    const [issueToken, setIssueToken] = useState('')
     const [isIssuing, setIsIssuing] = useState(false)
     const [isLoadingRequests, setIsLoadingRequests] = useState(false)
+    const [isLoadingReports, setIsLoadingReports] = useState(false)
     const [isApprovingRequestId, setIsApprovingRequestId] = useState('')
+    const [isDecryptingReportId, setIsDecryptingReportId] = useState('')
     const [pendingRequests, setPendingRequests] = useState<MembershipRegistrationRequestRecord[]>([])
+    const [recentReports, setRecentReports] = useState<ReportAttestationRecord[]>([])
+    const [decryptedByReportId, setDecryptedByReportId] = useState<Record<string, DecryptedReportPayload>>({})
     const [issuedFileName, setIssuedFileName] = useState('')
     const [approvalEpoch, setApprovalEpoch] = useState(getCurrentQuarterEpoch())
+    const [adminOrgSlug, setAdminOrgSlug] = useState('')
+    const [isAdminWallet, setIsAdminWallet] = useState<boolean | null>(null)
 
     const hasPendingRequests = useMemo(
         () => pendingRequests.some((request) => request.status === 'pending'),
         [pendingRequests],
     )
 
+    useEffect(() => {
+        if (!wallet.publicKey) {
+            setAdminOrgSlug('')
+            setIsAdminWallet(null)
+            return
+        }
+
+        let cancelled = false
+
+        async function loadProfile() {
+            try {
+                const address = wallet.publicKey?.toBase58()
+                if (!address) {
+                    return
+                }
+
+                const response = await fetch(`/api/onboarding/state?walletAddress=${encodeURIComponent(address)}`)
+                const payload = await parseApiJson<{
+                    ok: true
+                    profile: { role: 'admin' | 'reporter'; org: string } | null
+                }>(response, 'Unable to load admin profile.')
+
+                if (!response.ok || !payload.ok) {
+                    return
+                }
+
+                if (cancelled) {
+                    return
+                }
+
+                const isAdmin = payload.profile?.role === 'admin'
+                setIsAdminWallet(isAdmin)
+                setAdminOrgSlug(isAdmin ? payload.profile?.org ?? '' : '')
+
+                if (isAdmin && !org.trim() && payload.profile?.org) {
+                    setOrg(payload.profile.org)
+                }
+            } catch {
+                // Best-effort profile check.
+            }
+        }
+
+        void loadProfile()
+
+        return () => {
+            cancelled = true
+        }
+    }, [org, wallet.publicKey])
+
+    async function buildAdminAuthHeaders(action: 'list-requests' | 'approve-request' | 'issue-membership' | 'list-reports' | 'decrypt-report', orgForAuth: string) {
+        if (!wallet.publicKey) {
+            throw new Error('Connect admin wallet before performing admin actions.')
+        }
+
+        if (!wallet.signMessage) {
+            throw new Error('Wallet does not support message signing in this environment.')
+        }
+
+        const resolvedOrg = orgForAuth.trim()
+        if (!resolvedOrg) {
+            throw new Error('Organization is required for admin authorization.')
+        }
+
+        const walletAddress = wallet.publicKey.toBase58()
+        const issuedAt = new Date().toISOString()
+        const nonce = crypto.randomUUID()
+        const message = createAdminAuthMessage({
+            walletAddress,
+            org: resolvedOrg,
+            issuedAt,
+            nonce,
+            action,
+        })
+
+        const signatureBytes = await wallet.signMessage(new TextEncoder().encode(message))
+        const signatureBase64 = encodeSignatureBase64(signatureBytes)
+
+        return {
+            'x-admin-wallet-address': walletAddress,
+            'x-admin-signature': signatureBase64,
+            'x-admin-issued-at': issuedAt,
+            'x-admin-nonce': nonce,
+        }
+    }
+
     async function loadPendingRequests() {
-        if (!issueToken.trim()) {
-            toast.error('Add issue token before loading registration requests.')
+        const authOrg = org.trim() || adminOrgSlug.trim()
+        if (!authOrg) {
+            toast.error('Add organization or connect an admin wallet.')
             return
         }
 
         try {
             setIsLoadingRequests(true)
 
-            const response = await fetch('/api/membership/register-request', {
+            const headers = await buildAdminAuthHeaders('list-requests', authOrg)
+
+            const response = await fetch(`/api/membership/register-request?org=${encodeURIComponent(authOrg)}`, {
                 method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${issueToken.trim()}`,
-                },
+                headers,
             })
 
             const payload = await parseApiJson<{ ok: true; records: MembershipRegistrationRequestRecord[] }>(
@@ -69,6 +167,9 @@ export default function AdminPage() {
             }
 
             setPendingRequests(payload.records)
+            if (!org.trim()) {
+                setOrg(authOrg)
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to load registration requests.'
             toast.error(message)
@@ -77,12 +178,7 @@ export default function AdminPage() {
         }
     }
 
-    async function handleApproveRequest(requestId: string) {
-        if (!issueToken.trim()) {
-            toast.error('Add issue token before approving requests.')
-            return
-        }
-
+    async function handleApproveRequest(requestId: string, requestOrg: string) {
         if (!approvalEpoch.trim()) {
             toast.error('Add membership epoch before approving requests.')
             return
@@ -97,11 +193,13 @@ export default function AdminPage() {
         try {
             setIsApprovingRequestId(requestId)
 
+            const headers = await buildAdminAuthHeaders('approve-request', requestOrg)
+
             const response = await fetch('/api/membership/register-request/approve', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${issueToken.trim()}`,
+                    ...headers,
                 },
                 body: JSON.stringify({
                     requestId,
@@ -134,14 +232,81 @@ export default function AdminPage() {
         }
     }
 
-    async function handleIssueMembership() {
-        if (!org.trim() || !epoch.trim() || !walletAddress.trim()) {
-            toast.error('Add organization, epoch, and member wallet address first.')
+    async function loadRecentReports() {
+        const authOrg = org.trim() || adminOrgSlug.trim()
+        if (!authOrg) {
+            toast.error('Add organization or connect an admin wallet.')
             return
         }
 
-        if (!issueToken.trim()) {
-            toast.error('Add issue token before generating membership.json.')
+        try {
+            setIsLoadingReports(true)
+
+            const headers = await buildAdminAuthHeaders('list-reports', authOrg)
+            const response = await fetch(`/api/report/attest/list?org=${encodeURIComponent(authOrg)}`, {
+                method: 'GET',
+                headers,
+            })
+
+            const payload = await parseApiJson<{ ok: true; records: ReportAttestationRecord[] }>(
+                response,
+                'Unable to load report inbox.',
+            )
+
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.ok ? 'Unable to load report inbox.' : payload.error)
+            }
+
+            setRecentReports(payload.records)
+            setDecryptedByReportId({})
+            if (!org.trim()) {
+                setOrg(authOrg)
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unable to load report inbox.'
+            toast.error(message)
+        } finally {
+            setIsLoadingReports(false)
+        }
+    }
+
+    async function handleDecryptReport(record: ReportAttestationRecord) {
+        try {
+            setIsDecryptingReportId(record.id)
+
+            const headers = await buildAdminAuthHeaders('decrypt-report', record.org)
+            const response = await fetch(`/api/report/attest/decrypt?id=${encodeURIComponent(record.id)}`, {
+                method: 'GET',
+                headers,
+            })
+
+            const payload = await parseApiJson<{ ok: true; payload: DecryptedReportPayload }>(
+                response,
+                'Unable to decrypt report payload.',
+            )
+
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.ok ? 'Unable to decrypt report payload.' : payload.error)
+            }
+
+            setDecryptedByReportId((prev) => ({
+                ...prev,
+                [record.id]: payload.payload,
+            }))
+            toast.success('Report decrypted for admin view.')
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unable to decrypt report payload.'
+            toast.error(message)
+        } finally {
+            setIsDecryptingReportId('')
+        }
+    }
+
+    async function handleIssueMembership() {
+        const resolvedOrg = org.trim() || adminOrgSlug.trim()
+
+        if (!resolvedOrg || !epoch.trim() || !walletAddress.trim()) {
+            toast.error('Add organization, epoch, and member wallet address first.')
             return
         }
 
@@ -154,14 +319,16 @@ export default function AdminPage() {
         try {
             setIsIssuing(true)
 
+            const headers = await buildAdminAuthHeaders('issue-membership', resolvedOrg)
+
             const response = await fetch('/api/membership/issue', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${issueToken.trim()}`,
+                    ...headers,
                 },
                 body: JSON.stringify({
-                    org: org.trim(),
+                    org: resolvedOrg,
                     epoch: epoch.trim(),
                     walletAddress: walletAddress.trim(),
                     ttlDays: parsedTtl,
@@ -201,6 +368,17 @@ export default function AdminPage() {
                     </p>
                 </div>
 
+                <p className="rounded-xl border border-white/10 bg-white/4 px-3 py-2 text-xs text-zinc-300">
+                    Auth mode: {wallet.publicKey ? 'Wallet signature' : 'Not authenticated'}
+                    {wallet.publicKey && isAdminWallet === true ? ` | Admin org: ${adminOrgSlug}` : ''}
+                </p>
+
+                {wallet.publicKey && isAdminWallet === false ? (
+                    <p className="rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                        Connected wallet is not an admin profile in this app. Switch to your admin wallet.
+                    </p>
+                ) : null}
+
                 <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                         <Label htmlFor="org">Organization</Label>
@@ -217,14 +395,10 @@ export default function AdminPage() {
                     <Input id="walletAddress" value={walletAddress} onChange={(event) => setWalletAddress(event.target.value)} placeholder="Member wallet base58" className="h-11 rounded-xl border-white/15 bg-zinc-950/70 text-white placeholder:text-zinc-500" />
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
                     <div className="space-y-2">
                         <Label htmlFor="ttlDays">Credential TTL (days)</Label>
                         <Input id="ttlDays" type="number" min={1} max={365} value={ttlDays} onChange={(event) => setTtlDays(event.target.value)} className="h-11 rounded-xl border-white/15 bg-zinc-950/70 text-white placeholder:text-zinc-500" />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="issueToken">Issue token</Label>
-                        <Input id="issueToken" type="password" value={issueToken} onChange={(event) => setIssueToken(event.target.value)} placeholder="REPORT_MEMBERSHIP_ISSUE_TOKEN" className="h-11 rounded-xl border-white/15 bg-zinc-950/70 text-white placeholder:text-zinc-500" />
                     </div>
                 </div>
 
@@ -276,12 +450,63 @@ export default function AdminPage() {
                                     className="mt-3 h-9"
                                     variant="shine"
                                     disabled={Boolean(isApprovingRequestId)}
-                                    onClick={() => handleApproveRequest(request.id)}
+                                    onClick={() => handleApproveRequest(request.id, request.org)}
                                 >
                                     {isApprovingRequestId === request.id ? 'Approving...' : 'Approve and issue membership.json'}
                                 </Button>
                             </div>
                         ))}
+                </div>
+
+                <div className="border-t border-white/10 pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                        <h3 className="text-base font-semibold text-white">Report inbox</h3>
+                        <Button type="button" variant="soft" className="h-9" onClick={loadRecentReports} disabled={isLoadingReports}>
+                            {isLoadingReports ? 'Loading reports...' : 'Load reports'}
+                        </Button>
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-400">
+                        Shows attested report metadata for your org. Use decrypt to view message content.
+                    </p>
+
+                    {recentReports.length === 0 ? <p className="mt-3 text-xs text-zinc-500">No reports loaded yet.</p> : null}
+
+                    <div className="mt-3 space-y-3">
+                        {recentReports.map((record) => (
+                            <div key={record.id} className="rounded-xl border border-white/10 bg-white/4 p-3 text-sm text-zinc-200">
+                                <p className="font-medium">{record.org} | {record.epoch}</p>
+                                <p className="mt-1 text-xs text-zinc-400">Submitted: {new Date(record.createdAt).toLocaleString()}</p>
+                                <p className="mt-1 text-xs text-zinc-400">Reporter wallet: {record.walletAddress}</p>
+                                <p className="mt-1 text-xs text-zinc-500">Commitment: {record.proofCommitment.slice(0, 12)}...{record.proofCommitment.slice(-10)}</p>
+                                <p className="mt-1 text-xs text-zinc-500">Cipher hash: {record.encryptedPayloadHash.slice(0, 12)}...{record.encryptedPayloadHash.slice(-10)}</p>
+                                <Button
+                                    type="button"
+                                    variant="soft"
+                                    className="mt-3 h-8"
+                                    disabled={Boolean(isDecryptingReportId)}
+                                    onClick={() => handleDecryptReport(record)}
+                                >
+                                    {isDecryptingReportId === record.id ? 'Decrypting...' : 'Decrypt message'}
+                                </Button>
+
+                                {decryptedByReportId[record.id] ? (
+                                    <div className="mt-3 rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+                                        <p className="font-semibold">{decryptedByReportId[record.id].title}</p>
+                                        <p className="mt-2 whitespace-pre-wrap leading-6 text-emerald-50/95">{decryptedByReportId[record.id].details}</p>
+                                    </div>
+                                ) : null}
+
+                                <a
+                                    href={getExplorerUrl(`tx/${record.txSignature}`)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-2 inline-block text-xs font-medium text-zinc-200 underline underline-offset-4 hover:text-white"
+                                >
+                                    View transaction on Solana Explorer
+                                </a>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </section>
         </div>

@@ -2,33 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 
 import { issueMembershipCredential } from '@/lib/reporting/server/membership'
 import { getMembershipRegistrationRequestById, markMembershipRegistrationApproved, markUserProfileMembershipApproved } from '@/lib/reporting/server/repository'
+import { authorizeMembershipAdminRequest } from '@/lib/reporting/server/admin-auth'
 import { jsonUnexpectedError, parseJsonBody } from '@/lib/reporting/server/http'
 import type { ApproveMembershipRegistrationRequest, IssueMembershipCredentialResponse } from '@/lib/reporting/types'
 
 export const runtime = 'nodejs'
-
-function isAuthorized(request: NextRequest) {
-    const expectedToken = process.env.REPORT_MEMBERSHIP_ISSUE_TOKEN
-    if (!expectedToken) {
-        return {
-            ok: false,
-            reason: 'Missing REPORT_MEMBERSHIP_ISSUE_TOKEN configuration.',
-            status: 500,
-        } as const
-    }
-
-    const authHeader = request.headers.get('authorization') ?? ''
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-    if (!token || token !== expectedToken) {
-        return {
-            ok: false,
-            reason: 'Unauthorized membership approval request.',
-            status: 401,
-        } as const
-    }
-
-    return { ok: true } as const
-}
 
 function validateApproveRequest(body: ApproveMembershipRegistrationRequest) {
     if (!body.requestId?.trim()) {
@@ -45,11 +23,6 @@ function validateApproveRequest(body: ApproveMembershipRegistrationRequest) {
 
 export async function POST(request: NextRequest) {
     try {
-        const auth = isAuthorized(request)
-        if (!auth.ok) {
-            return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
-        }
-
         const parsedBody = await parseJsonBody<ApproveMembershipRegistrationRequest>(request)
         if (!parsedBody.ok) {
             return parsedBody.response
@@ -65,6 +38,15 @@ export async function POST(request: NextRequest) {
         const registrationRequest = getMembershipRegistrationRequestById(body.requestId.trim())
         if (!registrationRequest) {
             return NextResponse.json({ ok: false, error: 'Registration request not found.' }, { status: 404 })
+        }
+
+        const auth = authorizeMembershipAdminRequest({
+            request,
+            org: registrationRequest.org,
+            action: 'approve-request',
+        })
+        if (!auth.ok) {
+            return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
         }
 
         if (registrationRequest.status !== 'pending') {

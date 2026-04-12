@@ -80,9 +80,13 @@ export function createWalletChallengeMessage({
 }
 
 function verifyDetachedSignature({ message, signatureBase64, publicKeyBase58 }: { message: string; signatureBase64: string; publicKeyBase58: string }) {
-    const key = buildEd25519PublicKey(publicKeyBase58)
-    const signature = Buffer.from(signatureBase64, 'base64')
-    return verifySignature(null, Buffer.from(message, 'utf8'), key, signature)
+    try {
+        const key = buildEd25519PublicKey(publicKeyBase58)
+        const signature = Buffer.from(signatureBase64, 'base64')
+        return verifySignature(null, Buffer.from(message, 'utf8'), key, signature)
+    } catch {
+        return false
+    }
 }
 
 export function verifyMembershipCredential({

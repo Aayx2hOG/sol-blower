@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { issueMembershipCredential } from '@/lib/reporting/server/membership'
+import { authorizeMembershipAdminRequest } from '@/lib/reporting/server/admin-auth'
 import { jsonUnexpectedError, parseJsonBody } from '@/lib/reporting/server/http'
 import type { IssueMembershipCredentialRequest, IssueMembershipCredentialResponse } from '@/lib/reporting/types'
 
@@ -22,36 +23,8 @@ function validateIssueRequest(body: IssueMembershipCredentialRequest) {
     return null
 }
 
-function isAuthorized(request: NextRequest) {
-    const expectedToken = process.env.REPORT_MEMBERSHIP_ISSUE_TOKEN
-    if (!expectedToken) {
-        return {
-            ok: false,
-            reason: 'Missing REPORT_MEMBERSHIP_ISSUE_TOKEN configuration.',
-            status: 500,
-        } as const
-    }
-
-    const authHeader = request.headers.get('authorization') ?? ''
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-    if (!token || token !== expectedToken) {
-        return {
-            ok: false,
-            reason: 'Unauthorized membership issuance request.',
-            status: 401,
-        } as const
-    }
-
-    return { ok: true } as const
-}
-
 export async function POST(request: NextRequest) {
     try {
-        const auth = isAuthorized(request)
-        if (!auth.ok) {
-            return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
-        }
-
         const parsedBody = await parseJsonBody<IssueMembershipCredentialRequest>(request)
         if (!parsedBody.ok) {
             return parsedBody.response
@@ -63,8 +36,18 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ ok: false, error: validationError }, { status: 400 })
         }
 
+        const org = body.org.trim()
+        const auth = authorizeMembershipAdminRequest({
+            request,
+            org,
+            action: 'issue-membership',
+        })
+        if (!auth.ok) {
+            return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
+        }
+
         const issued = issueMembershipCredential({
-            org: body.org.trim(),
+            org,
             epoch: body.epoch.trim(),
             walletAddress: body.walletAddress.trim(),
             ttlDays: body.ttlDays,

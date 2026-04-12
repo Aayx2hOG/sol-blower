@@ -55,6 +55,7 @@ export default function ReportPage() {
     const [encrypted, setEncrypted] = useState(false)
     const [proofCommitment, setProofCommitment] = useState('')
     const [encryptedPayloadHash, setEncryptedPayloadHash] = useState('')
+    const [encryptedPayloadCiphertextB64, setEncryptedPayloadCiphertextB64] = useState('')
     const [encryptionIvB64, setEncryptionIvB64] = useState('')
     const [encryptionKeyB64, setEncryptionKeyB64] = useState('')
     const [txSignature, setTxSignature] = useState('')
@@ -241,6 +242,7 @@ export default function ReportPage() {
             })
 
             setEncryptedPayloadHash(result.payloadHash)
+            setEncryptedPayloadCiphertextB64(result.ciphertextBase64)
             setEncryptionIvB64(result.ivBase64)
             setEncryptionKeyB64(result.keyBase64)
             setTxSignature('')
@@ -273,7 +275,7 @@ export default function ReportPage() {
             return
         }
 
-        if (!proofCommitment || !encryptedPayloadHash || !encryptionIvB64) {
+        if (!proofCommitment || !encryptedPayloadHash || !encryptionIvB64 || !encryptedPayloadCiphertextB64 || !encryptionKeyB64) {
             toast.error('Missing cryptographic metadata. Regenerate proof and encryption.')
             return
         }
@@ -290,6 +292,21 @@ export default function ReportPage() {
 
         if (!membershipCredential) {
             toast.error('Upload your membership.json file before submitting.')
+            return
+        }
+
+        const connectedWallet = wallet.publicKey.toBase58()
+        const credentialWallet = membershipCredential.payload.walletAddress.trim()
+        const credentialOrg = membershipCredential.payload.org.trim()
+        const credentialEpoch = membershipCredential.payload.epoch.trim()
+
+        if (credentialWallet !== connectedWallet) {
+            toast.error('Credential wallet does not match connected wallet. Switch wallet or upload matching membership.json.')
+            return
+        }
+
+        if (credentialOrg !== formData.org.trim() || credentialEpoch !== formData.epoch.trim()) {
+            toast.error('Credential org/epoch does not match this report draft.')
             return
         }
 
@@ -340,6 +357,8 @@ export default function ReportPage() {
                 proofCommitment,
                 encryptedPayloadHash,
                 ivBase64: encryptionIvB64,
+                ciphertextBase64: encryptedPayloadCiphertextB64,
+                encryptionKeyBase64: encryptionKeyB64,
             })
 
             setAttestationId(reportAttestationId)
@@ -348,7 +367,14 @@ export default function ReportPage() {
                 description: `Attestation id: ${reportAttestationId}`,
             })
         } catch (error) {
-            toast.error('Submission or backend verification failed.')
+            const message = error instanceof Error ? error.message : 'Submission or backend verification failed.'
+
+            if (message.includes('Transaction not found on selected cluster')) {
+                toast.error('Backend could not find this tx on its RPC cluster. Check app cluster vs server SOLANA_RPC_URL cluster.')
+            } else {
+                toast.error(message)
+            }
+
             console.error(error)
             return
         } finally {

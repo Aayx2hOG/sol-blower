@@ -31,6 +31,8 @@ export interface AttestReportRequest {
     proofCommitment: string
     encryptedPayloadHash: string
     ivBase64: string
+    ciphertextBase64: string
+    encryptionKeyBase64: string
     membershipCredential: MembershipCredential
     walletChallenge: WalletChallenge
     walletSignatureBase64: string
@@ -115,9 +117,18 @@ export interface ReportAttestationRecord {
     proofCommitment: string
     encryptedPayloadHash: string
     ivBase64: string
+    ciphertextBase64?: string
+    encryptionKeyBase64?: string
     memoMatched: boolean
     membershipCredentialId: string
     walletChallengeNonce: string
     membershipVerified: boolean
     createdAt: string
+}
+
+export interface DecryptedReportPayload {
+    title: string
+    details: string
+    org: string
+    epoch: string
 }

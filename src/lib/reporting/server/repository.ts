@@ -29,20 +29,6 @@ let persistenceReady = false
 let persistenceDisabled = false
 let persistenceWarningShown = false
 
-function readLegacySecretSeed(orgIdentifier: string) {
-    const raw = process.env.REPORT_ORG_ADMIN_SECRET_KEYS
-    if (!raw) {
-        return null
-    }
-
-    try {
-        const parsed = JSON.parse(raw) as Record<string, string>
-        return parsed[orgIdentifier] ?? null
-    } catch {
-        return null
-    }
-}
-
 function loadPersistedState() {
     if (persistenceReady) {
         return
@@ -66,7 +52,7 @@ function loadPersistedState() {
             membershipRegistrationStore.set(record.id, record)
         }
         for (const record of parsed.orgs ?? []) {
-            const secretSeed = (record as InternalOrgRecord).adminSecretKeySeed ?? readLegacySecretSeed(record.name) ?? readLegacySecretSeed(record.slug) ?? createOrgSecretSeed()
+            const secretSeed = (record as InternalOrgRecord).adminSecretKeySeed ?? createOrgSecretSeed()
             const hydrated: InternalOrgRecord = {
                 ...record,
                 adminSecretKeySeed: secretSeed,
@@ -172,16 +158,6 @@ export function getOrgAdminSecretSeed(orgIdentifier: string) {
         return org.adminSecretKeySeed
     }
 
-    const legacyRaw = process.env.REPORT_ORG_ADMIN_SECRET_KEYS
-    if (legacyRaw) {
-        try {
-            const parsed = JSON.parse(legacyRaw) as Record<string, string>
-            return parsed[orgIdentifier] ?? null
-        } catch {
-            return null
-        }
-    }
-
     return null
 }
 
@@ -223,6 +199,20 @@ export function getReportAttestationBySignature(signature: string) {
     ensureStateLoaded()
 
     return reportStore.get(signature) ?? null
+}
+
+export function getReportAttestationById(id: string) {
+    ensureStateLoaded()
+
+    return Array.from(reportStore.values()).find((record) => record.id === id) ?? null
+}
+
+export function listReportAttestations({ org }: { org: string }) {
+    ensureStateLoaded()
+
+    return Array.from(reportStore.values())
+        .filter((record) => record.org === org)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 export function createMembershipRegistrationRequest({ org, walletAddress }: { org: string; walletAddress: string }): MembershipRegistrationRequestRecord {

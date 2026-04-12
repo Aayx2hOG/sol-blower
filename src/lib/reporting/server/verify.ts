@@ -52,10 +52,18 @@ export async function verifyMemoAttestation({
     org: string
     epoch: string
 }) {
-    const tx = await serverConnection.getParsedTransaction(signature, {
-        commitment: 'confirmed',
-        maxSupportedTransactionVersion: 0,
-    })
+    let tx
+    try {
+        tx = await serverConnection.getParsedTransaction(signature, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+        })
+    } catch {
+        return {
+            ok: false,
+            reason: 'Unable to verify transaction against current RPC endpoint. Please retry.',
+        } as const
+    }
 
     if (!tx) {
         return {

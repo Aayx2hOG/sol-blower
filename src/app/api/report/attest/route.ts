@@ -36,6 +36,12 @@ function validateRequest(body: AttestReportRequest) {
     if (!isLikelyBase64(body.ivBase64)) {
         return 'Invalid IV format.'
     }
+    if (!isLikelyBase64(body.ciphertextBase64)) {
+        return 'Invalid ciphertext format.'
+    }
+    if (!isLikelyBase64(body.encryptionKeyBase64)) {
+        return 'Invalid encryption key format.'
+    }
     if (!isLikelyBase64(body.walletSignatureBase64)) {
         return 'Invalid wallet signature format.'
     }
@@ -139,6 +145,8 @@ export async function POST(request: NextRequest) {
             proofCommitment: body.proofCommitment,
             encryptedPayloadHash: body.encryptedPayloadHash,
             ivBase64: body.ivBase64,
+            ciphertextBase64: body.ciphertextBase64,
+            encryptionKeyBase64: body.encryptionKeyBase64,
             memoMatched: verification.memoMatched,
             membershipCredentialId: membershipCheck.credentialId,
             walletChallengeNonce: body.walletChallenge.nonce,
