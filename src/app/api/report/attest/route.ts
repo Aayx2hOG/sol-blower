@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
         if (body.zkProof) {
             const proofVerification = await verifyZKProof(body.zkProof)
 
-            if (!proofVerification.ok) {
+            if (!proofVerification.ok || !proofVerification.nullifier || !proofVerification.root) {
                 return NextResponse.json({ ok: false, error: `ZK proof verification failed: ${proofVerification.reason}` }, { status: 422 })
             }
 
