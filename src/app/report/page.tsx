@@ -14,7 +14,9 @@ import { Reveal, Stagger, StaggerItem } from '@/components/ui/reveal'
 import { SpotlightCard } from '@/components/ui/spotlight-card'
 import { useCluster } from '@/components/cluster/cluster-data-access'
 import { createWalletChallengeMessage, encodeSignatureBase64 } from '@/lib/reporting/membership'
-import { encryptReportPayload, generateProofCommitment } from '@/lib/reporting/crypto'
+import { encryptReportPayload, generateProofCommitment, wrapAESKeyForAdmin } from '@/lib/reporting/crypto'
+import { generateMembershipProof, getNullifierFromProof } from '@/lib/reporting/prover'
+import type { WrappedEncryptionKey } from '@/lib/reporting/types'
 import { parseApiJson } from '@/lib/reporting/http'
 import { submitReportMemo } from '@/lib/reporting/solana'
 import type { AttestReportRequest, MembershipCredential, ReportDraft } from '@/lib/reporting/types'
@@ -67,6 +69,25 @@ export default function ReportPage() {
     const [isEncrypting, setIsEncrypting] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [membershipPendingOrg, setMembershipPendingOrg] = useState('')
+    const [adminPublicKeyB64, setAdminPublicKeyB64] = useState('')
+    const [zkProofResult, setZkProofResult] = useState<any>(null)
+    const [wrappedEncryptionKey, setWrappedEncryptionKey] = useState<WrappedEncryptionKey | null>(null)
+    async function fetchAdminPublicKey(org: string) {
+        try {
+            const response = await fetch(`/api/onboarding/org/${encodeURIComponent(org)}/key`)
+            if (!response.ok) {
+                toast.error('Failed to fetch admin public key for encryption.')
+                return false
+            }
+            const data = await response.json()
+            setAdminPublicKeyB64(data.adminPublicKeyBase64)
+            return true
+        } catch (error) {
+            toast.error('Unable to load admin public key.')
+            console.error(error)
+            return false
+        }
+    }
 
     function updateField(field: keyof typeof formData, value: string) {
         setFormData((prev) => ({ ...prev, [field]: value }))
@@ -248,6 +269,23 @@ export default function ReportPage() {
             setTxSignature('')
             setAttestationId('')
             setBackendVerified(false)
+
+            // Wrap the AES key with admin X25519 public key for transmission
+            try {
+                if (!adminPublicKeyB64) {
+                    const keyLoaded = await fetchAdminPublicKey(formData.org.trim())
+                    if (!keyLoaded) {
+                        return
+                    }
+                }
+
+                const wrapped = await wrapAESKeyForAdmin(result.keyBase64, adminPublicKeyB64)
+                setWrappedEncryptionKey(wrapped)
+            } catch (error) {
+                toast.error('Failed to wrap encryption key with admin public key.')
+                console.error(error)
+                return
+            }
             toast.success('Payload encrypted with AES-GCM.', {
                 description: 'Store the local key securely before production rollout.',
             })
@@ -265,8 +303,13 @@ export default function ReportPage() {
     async function handleSubmitReport(event: FormEvent<HTMLFormElement>) {
         event.preventDefault()
 
-        if (!proofReady || !encrypted) {
-            toast.error('Generate proof and encrypt payload before submit.')
+        if (!proofReady || !encrypted || !wrappedEncryptionKey) {
+            toast.error('Generate proof, encrypt payload, and wrap key before submit.')
+            return
+        }
+
+        if (!zkProofResult) {
+            toast.error('ZK proof not generated. Restart the process.')
             return
         }
 
@@ -358,7 +401,8 @@ export default function ReportPage() {
                 encryptedPayloadHash,
                 ivBase64: encryptionIvB64,
                 ciphertextBase64: encryptedPayloadCiphertextB64,
-                encryptionKeyBase64: encryptionKeyB64,
+                zkProof: zkProofResult,
+                wrappedEncryptionKey: wrappedEncryptionKey,
             })
 
             setAttestationId(reportAttestationId)
