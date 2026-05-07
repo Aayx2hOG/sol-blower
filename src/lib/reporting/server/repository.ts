@@ -3,10 +3,12 @@ import { dirname, resolve } from 'node:path'
 
 import { Keypair } from '@solana/web3.js'
 
-import type { MembershipRegistrationRequestRecord, OrgRecord, ReportAttestationRecord, UserProfileRecord } from '@/lib/reporting/types'
+import type { MembershipRegistrationRequestRecord, OrgRecord, ReportAttestationRecord, UserProfileRecord, NullifierRecord, MerkleRootRecord } from '@/lib/reporting/types'
 
 const reportStore = new Map<string, ReportAttestationRecord>()
 const membershipRegistrationStore = new Map<string, MembershipRegistrationRequestRecord>()
+const nullifierStore = new Map<string, NullifierRecord>() // Prevent double-submission
+const merkleRootStore = new Map<string, MerkleRootRecord>() // Store trusted merkle roots per org
 type InternalOrgRecord = OrgRecord & {
     adminSecretKeySeed: string
     adminPublicKey: string
@@ -23,6 +25,8 @@ type PersistedState = {
     membershipRequests: MembershipRegistrationRequestRecord[]
     orgs: InternalOrgRecord[]
     userProfiles: UserProfileRecord[]
+    nullifiers: NullifierRecord[]
+    merkleRoots: MerkleRootRecord[]
 }
 
 let persistenceReady = false
@@ -44,6 +48,8 @@ function loadPersistedState() {
         membershipRegistrationStore.clear()
         orgStore.clear()
         userProfileStore.clear()
+        nullifierStore.clear()
+        merkleRootStore.clear()
 
         for (const record of parsed.reports ?? []) {
             reportStore.set(record.txSignature, record)
@@ -65,6 +71,12 @@ function loadPersistedState() {
         }
         for (const record of parsed.userProfiles ?? []) {
             userProfileStore.set(record.walletAddress, record)
+        }
+        for (const record of parsed.nullifiers ?? []) {
+            nullifierStore.set(record.nullifier, record)
+        }
+        for (const record of parsed.merkleRoots ?? []) {
+            merkleRootStore.set(`${record.org}:${record.root}`, record)
         }
     } catch {
         // Fresh install or unreadable state file. Start empty.
@@ -90,6 +102,8 @@ function persistState() {
             membershipRequests: Array.from(membershipRegistrationStore.values()),
             orgs: Array.from(orgStore.values()),
             userProfiles: Array.from(userProfileStore.values()),
+            nullifiers: Array.from(nullifierStore.values()),
+            merkleRoots: Array.from(merkleRootStore.values()),
         }
 
         writeFileSync(persistenceFilePath, JSON.stringify(snapshot, null, 2), 'utf8')
@@ -367,4 +381,86 @@ export function markUserProfileMembershipApproved({ walletAddress, org }: { wall
         org,
         membershipStatus: 'approved',
     })
+}
+
+// NULLIFIER TRACKING: Prevent double-submission of same proof
+export function checkNullifierUsed(nullifier: string, org: string): boolean {
+    ensureStateLoaded()
+
+    const record = nullifierStore.get(nullifier)
+    if (!record) {
+        return false
+    }
+
+    // Nullifier can only be used once per org
+    return record.org === org
+}
+
+export function recordNullifierUsage(nullifier: string, org: string, reportId: string): NullifierRecord {
+    ensureStateLoaded()
+
+    if (checkNullifierUsed(nullifier, org)) {
+        throw new Error(`Nullifier already used in organization ${org}`)
+    }
+
+    const record: NullifierRecord = {
+        nullifier,
+        org,
+        reportId,
+        createdAt: new Date().toISOString(),
+    }
+
+    nullifierStore.set(nullifier, record)
+    persistState()
+    return record
+}
+
+// MERKLE ROOT MANAGEMENT: Store trusted merkle roots for proof verification
+export function addMerkleRoot(org: string, root: string, epoch: string): MerkleRootRecord {
+    ensureStateLoaded()
+
+    const key = `${org}:${root}`
+    if (merkleRootStore.has(key)) {
+        // Root already exists, return existing record
+        return merkleRootStore.get(key)!
+    }
+
+    const record: MerkleRootRecord = {
+        root,
+        org,
+        addedAt: new Date().toISOString(),
+        epoch,
+    }
+
+    merkleRootStore.set(key, record)
+    persistState()
+    return record
+}
+
+export function isMerkleRootTrusted(org: string, root: string): boolean {
+    ensureStateLoaded()
+
+    const key = `${org}:${root}`
+    return merkleRootStore.has(key)
+}
+
+export function listMerkleRoots(org: string): MerkleRootRecord[] {
+    ensureStateLoaded()
+
+    return Array.from(merkleRootStore.values())
+        .filter((r) => r.org === org)
+        .sort((a, b) => b.addedAt.localeCompare(a.addedAt))
+}
+
+export function removeMerkleRoot(org: string, root: string): boolean {
+    ensureStateLoaded()
+
+    const key = `${org}:${root}`
+    if (merkleRootStore.has(key)) {
+        merkleRootStore.delete(key)
+        persistState()
+        return true
+    }
+
+    return false
 }
