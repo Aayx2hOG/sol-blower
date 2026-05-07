@@ -64,6 +64,17 @@ export async function GET(request: NextRequest) {
         }
 
         if (!record.ciphertextBase64 || !record.encryptionKeyBase64) {
+            // If no plaintext key, check for wrapped key
+            if (record.wrappedEncryptionKey) {
+                // Return wrapped key for client-side admin unwrapping
+                return NextResponse.json({
+                    ok: true,
+                    wrappedEncryptionKey: record.wrappedEncryptionKey,
+                    message: 'Admin must unwrap key client-side using private key.',
+                    ciphertextBase64: record.ciphertextBase64,
+                    ivBase64: record.ivBase64,
+                })
+            }
             return NextResponse.json({ ok: false, error: 'Decryption material is not available for this report.' }, { status: 422 })
         }
 
