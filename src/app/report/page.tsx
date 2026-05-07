@@ -72,20 +72,20 @@ export default function ReportPage() {
     const [adminPublicKeyB64, setAdminPublicKeyB64] = useState('')
     const [zkProofResult, setZkProofResult] = useState<any>(null)
     const [wrappedEncryptionKey, setWrappedEncryptionKey] = useState<WrappedEncryptionKey | null>(null)
-    async function fetchAdminPublicKey(org: string) {
+    async function fetchAdminPublicKey(org: string): Promise<string | null> {
         try {
             const response = await fetch(`/api/onboarding/org/${encodeURIComponent(org)}/key`)
             if (!response.ok) {
                 toast.error('Failed to fetch admin public key for encryption.')
-                return false
+                return null
             }
             const data = await response.json()
             setAdminPublicKeyB64(data.adminPublicKeyBase64)
-            return true
+            return data.adminPublicKeyBase64 as string
         } catch (error) {
             toast.error('Unable to load admin public key.')
             console.error(error)
-            return false
+            return null
         }
     }
 
@@ -272,14 +272,15 @@ export default function ReportPage() {
 
             // Wrap the AES key with admin X25519 public key for transmission
             try {
-                if (!adminPublicKeyB64) {
-                    const keyLoaded = await fetchAdminPublicKey(formData.org.trim())
-                    if (!keyLoaded) {
-                        return
-                    }
+                const adminPublicKey = adminPublicKeyB64 || (await fetchAdminPublicKey(formData.org.trim()))
+                if (!adminPublicKey) {
+                    return
                 }
 
-                const wrapped = await wrapAESKeyForAdmin(result.keyBase64, adminPublicKeyB64)
+                const wrapped = await wrapAESKeyForAdmin({
+                    aesKeyBase64: result.keyBase64,
+                    adminPublicKeyBase64: adminPublicKey,
+                })
                 setWrappedEncryptionKey(wrapped)
             } catch (error) {
                 toast.error('Failed to wrap encryption key with admin public key.')
