@@ -11,6 +11,33 @@ type AuthorizationResult =
 const MAX_CHALLENGE_AGE_MS = 5 * 60 * 1000
 const MAX_FUTURE_SKEW_MS = 30 * 1000
 
+// SECURITY: Environment-based admin secret management
+// In production, use KMS or secure secret store instead of file persistence
+export function getAdminSecretSeedFromEnv(org: string): string | null {
+    // Try org-specific env var first: ADMIN_SECRET_SEED_ORGNAME
+    const orgNormalized = org.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+    const envKey = `ADMIN_SECRET_SEED_${orgNormalized}`
+    const envSecret = process.env[envKey]
+
+    if (envSecret) {
+        // SECURITY: Log only in development
+        if (process.env.NODE_ENV === 'development') {
+            console.debug(`Using admin secret from env var: ${envKey}`)
+        }
+        return envSecret
+    }
+
+    // SECURITY: Do NOT fall back to file persistence in production
+    if (process.env.NODE_ENV === 'production') {
+        console.error(`Admin secret seed not found in environment for org: ${org}. Set ${envKey} in your production secrets.`)
+        return null
+    }
+
+    // Dev only: Fall back to repository file persistence
+    console.warn(`WARNING: Using file-persisted admin secret for ${org}. This is insecure in production.`)
+    return null
+}
+
 export function authorizeMembershipAdminRequest({
     request,
     org,
