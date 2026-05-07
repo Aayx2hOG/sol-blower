@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { createWalletChallengeMessage, verifyMembershipCredential, verifyWalletChallengeSignature } from '@/lib/reporting/server/membership'
-import { getReportAttestationBySignature, saveReportAttestation } from '@/lib/reporting/server/repository'
+import { getReportAttestationBySignature, saveReportAttestation, checkNullifierUsed, recordNullifierUsage, isMerkleRootTrusted } from '@/lib/reporting/server/repository'
+import { verifyZKProof } from '@/lib/reporting/server/proof-verifier'
 import { verifyMemoAttestation } from '@/lib/reporting/server/verify'
 import { jsonUnexpectedError, parseJsonBody } from '@/lib/reporting/server/http'
 import type { AttestReportRequest } from '@/lib/reporting/types'
@@ -38,9 +39,6 @@ function validateRequest(body: AttestReportRequest) {
     }
     if (!isLikelyBase64(body.ciphertextBase64)) {
         return 'Invalid ciphertext format.'
-    }
-    if (!isLikelyBase64(body.encryptionKeyBase64)) {
-        return 'Invalid encryption key format.'
     }
     if (!isLikelyBase64(body.walletSignatureBase64)) {
         return 'Invalid wallet signature format.'
@@ -137,6 +135,32 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ ok: false, error: walletChallengeCheck.reason }, { status: 422 })
         }
 
+        // Verify ZK proof if provided
+        let zkProofVerified = false
+        let zkProofNullifier = ''
+        let merkleRootFromProof = ''
+
+        if (body.zkProof) {
+            const proofVerification = await verifyZKProof(body.zkProof)
+
+            if (!proofVerification.ok) {
+                return NextResponse.json({ ok: false, error: `ZK proof verification failed: ${proofVerification.reason}` }, { status: 422 })
+            }
+
+            zkProofNullifier = proofVerification.nullifier
+            merkleRootFromProof = proofVerification.root
+
+            if (checkNullifierUsed(zkProofNullifier, body.draft.org.trim())) {
+                return NextResponse.json({ ok: false, error: 'Report already submitted (nullifier reuse detected).' }, { status: 422 })
+            }
+
+            if (!isMerkleRootTrusted(body.draft.org.trim(), merkleRootFromProof)) {
+                return NextResponse.json({ ok: false, error: 'Merkle root not recognized for organization.' }, { status: 422 })
+            }
+
+            zkProofVerified = true
+        }
+
         const record = saveReportAttestation({
             txSignature: body.txSignature,
             walletAddress: body.walletAddress,
@@ -146,12 +170,18 @@ export async function POST(request: NextRequest) {
             encryptedPayloadHash: body.encryptedPayloadHash,
             ivBase64: body.ivBase64,
             ciphertextBase64: body.ciphertextBase64,
-            encryptionKeyBase64: body.encryptionKeyBase64,
+            wrappedEncryptionKey: body.wrappedEncryptionKey || null,
+            zkProofNullifier: zkProofNullifier,
+            zkProofVerified: zkProofVerified,
             memoMatched: verification.memoMatched,
             membershipCredentialId: membershipCheck.credentialId,
             walletChallengeNonce: body.walletChallenge.nonce,
             membershipVerified: true,
         })
+
+        if (zkProofNullifier) {
+            recordNullifierUsage(zkProofNullifier, body.draft.org.trim(), record.id)
+        }
 
         return NextResponse.json({ ok: true, record })
     } catch (error) {
