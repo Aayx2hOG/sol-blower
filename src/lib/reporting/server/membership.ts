@@ -3,6 +3,7 @@ import { createPrivateKey, createPublicKey, sign as signMessage, verify as verif
 import { Keypair, PublicKey } from '@solana/web3.js'
 
 import { getOrgAdminPublicKey, getOrgAdminSecretSeed } from '@/lib/reporting/server/repository'
+import { getAdminSecretSeedFromEnv } from '@/lib/reporting/server/admin-auth'
 import type { MembershipCredential, MembershipCredentialPayload, WalletChallenge } from '@/lib/reporting/types'
 
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
@@ -188,7 +189,12 @@ export function issueMembershipCredential({
     walletAddress: string
     ttlDays?: number
 }) {
-    const secret = getOrgAdminSecretSeed(org)
+    // SECURITY: Try environment variable first, then fall back to repository
+    let secret = getAdminSecretSeedFromEnv(org)
+    if (!secret) {
+        secret = getOrgAdminSecretSeed(org)
+    }
+
     if (!secret) {
         return {
             ok: false,
