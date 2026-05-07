@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status })
         }
 
-        const records = listReportAttestations({ org }).map(({ ciphertextBase64, encryptionKeyBase64, ...safeRecord }) => safeRecord)
+        const records = listReportAttestations({ org }).map(({ ciphertextBase64, ...safeRecord }) => safeRecord)
         return NextResponse.json({ ok: true, records })
     } catch (error) {
         return jsonUnexpectedError(error, 'Failed to load report attestations.')
