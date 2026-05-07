@@ -170,11 +170,11 @@ export interface ReportAttestationRecord {
     encryptedPayloadHash: string
     ivBase64: string
     ciphertextBase64?: string
-    encryptionKeyBase64?: string // Legacy plaintext AES key (optional/backward compatibility)
+    encryptionKeyBase64?: string // Legacy: plaintext AES key (deprecated in favor of wrappedEncryptionKey)
     wrappedEncryptionKey?: WrappedEncryptionKey // Wrapped AES key (safe for storage)
     zkProofNullifier?: string // Nullifier from ZK proof (prevent double-submission)
     memoMatched: boolean
-    zkProofVerified: boolean // Whether ZK proof was verified on server
+    zkProofVerified?: boolean // Whether ZK proof was verified on server
     membershipCredentialId: string
     walletChallengeNonce: string
     membershipVerified: boolean
